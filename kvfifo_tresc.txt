@@ -107,7 +107,7 @@ a konstruktor przenoszący i destruktor muszą być no-throw.
   void clear();
 
 - Iterator k_iterator oraz metody k_begin i k_end, pozwalające przeglądać zbiór
-  kluczy w rosnącej kolejności wartości. Iteratory mogą być unieważnione przez
+  kluczy w rosnącej kolejności ich wartości. Iteratory mogą być unieważnione przez
   dowolną zakończoną powodzeniem operację modyfikującą kolejkę oraz operacje
   front, back, first i last w wersjach bez const. Iterator musi spełniać koncept
   std::bidirectional_iterator. Wszelkie operacje w czasie O(log n). Przeglądanie
