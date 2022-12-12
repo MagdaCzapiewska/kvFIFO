@@ -2,6 +2,7 @@
 #define __KVFIFO_H__
 
 #include <utility>
+#include <tuple>
 #include <cstdint>
 #include <map>
 #include <list>
@@ -9,25 +10,17 @@
 #include <stdexcept>
 #include <iostream>
 
+
 // lista samych wartości (tzn.par klucz, wartość)
 // mapa klucz klucz, wartość: lista itratorów
-
-/*
- Wskazówki dla mnie:
- Generalnie chodzi o rzucanie wyjątków i odpowiednie ich przewidywanie,
- o alokowanie pamięci (nie malloc, tylko new), o używanie wskaźników (nie new, tylko make_shared),
- o zwalnianie pamięci i brak wycieków,
- o odpowiednie używanie noexcept i const,
- o zamykanie w namespace'ach (niezaśmiecanie globalnej przestrzeni nazw),
- o kopiowanie przy modyfikowaniu (efektywnie, a nie zbyt często lub niepotrzebnie!).
-*/
 
 template <typename K, typename V> class kvfifo {
 
 public:
     kvfifo();
     kvfifo(kvfifo const &);
-    kvfifo(kvfifo &&);
+    kvfifo(kvfifo &&) noexcept;
+    ~kvfifo() noexcept;
 
     kvfifo& operator=(kvfifo other);
 
@@ -69,6 +62,21 @@ public:
     // Iterator k_iterator oraz metody k_begin i k_end
     // pozwalające przeglądać zbiór kluczy w rosnącej kolejności wartości
 
+    typedef std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>> Map;
+    typedef typename Map::iterator MapIterator;
+
+    class k_iterator : public MapIterator
+    {
+    public:
+        k_iterator() : MapIterator() {};
+        k_iterator(MapIterator s) : MapIterator(s) {};
+        K* operator->() { return (K* const)&(MapIterator::operator->()->first); }
+        K operator*() { return MapIterator::operator*().first; }
+    };
+
+    k_iterator k_begin();
+    k_iterator k_end();
+
 private:
     std::shared_ptr<std::list<std::pair<K, V>>> queue;
     std::shared_ptr<std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>>> iters;
@@ -93,17 +101,19 @@ kvfifo<K, V>::kvfifo(kvfifo<K, V> const &other) : queue(other.queue), iters(othe
 }
 
 template <typename K, typename V>
-kvfifo<K, V>::kvfifo(kvfifo<K, V> &&) = default;
+kvfifo<K, V>::kvfifo(kvfifo<K, V> &&) noexcept = default;
+
+template <typename K, typename V>
+kvfifo<K, V>::~kvfifo() noexcept = default;
 
 template <typename K, typename V>
 kvfifo<K, V>& kvfifo<K, V>::operator=(kvfifo<K, V> other) {
-    //return *this = kvfifo<K, V>(std::move(other));
+    if (other.modifiable_from_outside) {
+        other.copy_if_needed();
+    }
     queue = other.queue;
     iters = other.iters;
     modifiable_from_outside = false;
-    if (other.modifiable_from_outside) {
-        copy_if_needed();
-    }
     return *this;
 }
 
@@ -129,12 +139,17 @@ void kvfifo<K, V>::copy_if_needed() {
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
     this->copy_if_needed();
-    (*queue).emplace_back(k, v);
-    auto it = --queue->end();
+    queue->emplace_back(k, v);
+    auto it = iters->end();
+    bool key_created = false;
     try {
-        (*iters)[k].push_back(it);
+        std::tie(it, key_created) = iters->emplace(k, std::list<typename std::list<std::pair<K, V>>::iterator>());
+        it->second.push_back(--queue->end());
     } catch (...) {
-        queue->erase(it);
+        if (key_created) {
+            iters->erase(it);
+        }
+        queue->pop_back();
         throw;
     }
 }
@@ -150,11 +165,11 @@ void kvfifo<K, V>::pop() {
 
 template <typename K, typename V>
 void kvfifo<K, V>::pop(K const &k) {
-    this->copy_if_needed();
     auto it = iters->find(k);
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
+    this->copy_if_needed();
     queue->erase(it->second.front());
     it->second.pop_front();
     if (it->second.empty()) {
@@ -164,11 +179,11 @@ void kvfifo<K, V>::pop(K const &k) {
 
 template <typename K, typename V>
 void kvfifo<K, V>::move_to_back(K const &k) {
-    this->copy_if_needed();
     auto it = iters->find(k);
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
+    this->copy_if_needed();
     for (auto const &i : it->second) {
         queue->splice(queue->end(), *queue, i);
     }
@@ -176,11 +191,11 @@ void kvfifo<K, V>::move_to_back(K const &k) {
 
 template <typename K, typename V>
 std::pair<K const &, V &> kvfifo<K, V>::front() {
-    this->copy_if_needed();
-    modifiable_from_outside = true;
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
+    this->copy_if_needed();
+    modifiable_from_outside = true;
     return {queue->front().first, queue->front().second};
 }
 
@@ -194,11 +209,11 @@ std::pair<K const &, V const &> kvfifo<K, V>::front() const {
 
 template <typename K, typename V>
 std::pair<K const &, V &> kvfifo<K, V>::back() {
-    this->copy_if_needed();
-    modifiable_from_outside = true;
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
+    this->copy_if_needed();
+    modifiable_from_outside = true;
     return {queue->back().first, queue->back().second};
 }
 
@@ -212,12 +227,12 @@ std::pair<K const &, V const &> kvfifo<K, V>::back() const {
 
 template <typename K, typename V>
 std::pair<K const &, V &> kvfifo<K, V>::first(K const &key) {
-    this->copy_if_needed();
-    modifiable_from_outside = true;
     auto it = iters->find(key);
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
+    this->copy_if_needed();
+    modifiable_from_outside = true;
     return {(*it->second.front()).first, (*it->second.front()).second};
 }
 
@@ -232,12 +247,12 @@ std::pair<K const &, V const &> kvfifo<K, V>::first(K const &key) const {
 
 template <typename K, typename V>
 std::pair<K const &, V &> kvfifo<K, V>::last(K const &key) {
-    this->copy_if_needed();
-    modifiable_from_outside = true;
     auto it = iters->find(key);
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
+    this->copy_if_needed();
+    modifiable_from_outside = true;
     return {(*it->second.back()).first, (*it->second.back()).second};
 }
 
@@ -273,8 +288,20 @@ void kvfifo<K, V>::clear() {
     iters->clear();
 }
 
+template <typename K, typename V>
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_begin() {
+
+    return kvfifo<K, V>::k_iterator(iters->begin());
+}
+
+template <typename K, typename V>
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_end() {
+    return kvfifo<K, V>::k_iterator(iters->end());
+}
+
 
 
 #endif // __KVFIFO_H__
+
 
 
