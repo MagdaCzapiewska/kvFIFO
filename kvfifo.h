@@ -1,20 +1,27 @@
 #ifndef __KVFIFO_H__
 #define __KVFIFO_H__
 
-#include <utility>
-#include <tuple>
 #include <cstdint>
-#include <map>
 #include <list>
+#include <map>
 #include <memory>
+#include <ranges>
 #include <stdexcept>
-#include <iostream>
-
-
-// lista samych wartości (tzn.par klucz, wartość)
-// mapa klucz klucz, wartość: lista itratorów
+#include <tuple>
+#include <utility>
 
 template <typename K, typename V> class kvfifo {
+
+private:
+    using kv_queue = std::list<std::pair<K, V>>;
+    using kv_map = std::map<K, std::list<typename kv_queue::iterator>>;
+    using keys_view = std::ranges::keys_view<std::ranges::ref_view<kv_map>>;
+
+    std::shared_ptr<kv_queue> queue;
+    std::shared_ptr<kv_map> iters;
+    bool modifiable_from_outside;
+
+    void copy_if_needed();
 
 public:
     kvfifo();
@@ -48,47 +55,16 @@ public:
 
     void clear();
 
-    /*
-    class k_iterator() {
-    private:
-        std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>>::iterator to_map;
+    using k_iterator = std::ranges::iterator_t<keys_view>;
 
-    public:
-
-    }
-
-    k_begin();
-    */
-    // Iterator k_iterator oraz metody k_begin i k_end
-    // pozwalające przeglądać zbiór kluczy w rosnącej kolejności wartości
-
-    typedef std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>> Map;
-    typedef typename Map::iterator MapIterator;
-
-    class k_iterator : public MapIterator
-    {
-    public:
-        k_iterator() : MapIterator() {};
-        k_iterator(MapIterator s) : MapIterator(s) {};
-        K* operator->() { return (K* const)&(MapIterator::operator->()->first); }
-        K operator*() { return MapIterator::operator*().first; }
-    };
-
-    k_iterator k_begin();
-    k_iterator k_end();
-
-private:
-    std::shared_ptr<std::list<std::pair<K, V>>> queue;
-    std::shared_ptr<std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>>> iters;
-    bool modifiable_from_outside;
-
-    void copy_if_needed();
+    k_iterator k_begin() const;
+    k_iterator k_end() const;
 };
 
 template <typename K, typename V>
 kvfifo<K, V>::kvfifo() {
-    queue = std::make_shared<std::list<std::pair<K, V>>>();
-    iters = std::make_shared<std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>>>();
+    queue = std::make_shared<kv_queue>();
+    iters = std::make_shared<kv_map>();
     modifiable_from_outside = false;
 }
 
@@ -123,8 +99,8 @@ void kvfifo<K, V>::copy_if_needed() {
         return;
     }
 
-    auto queue_copy = std::make_shared<std::list<std::pair<K, V>>>(*queue);
-    auto iters_copy = std::make_shared<std::map<K, std::list<typename std::list<std::pair<K, V>>::iterator>>>(*iters);
+    auto queue_copy = std::make_shared<kv_queue>(*queue);
+    auto iters_copy = std::make_shared<kv_map>(*iters);
 
     for (auto it = queue_copy->begin(); it != queue_copy->end(); ++it) {
         auto pair_it = iters_copy->find(it->first);
@@ -143,7 +119,7 @@ void kvfifo<K, V>::push(K const &k, V const &v) {
     auto it = iters->end();
     bool key_created = false;
     try {
-        std::tie(it, key_created) = iters->emplace(k, std::list<typename std::list<std::pair<K, V>>::iterator>());
+        std::tie(it, key_created) = iters->emplace(k, std::list<typename kv_queue::iterator>());
         it->second.push_back(--queue->end());
     } catch (...) {
         if (key_created) {
@@ -289,14 +265,13 @@ void kvfifo<K, V>::clear() {
 }
 
 template <typename K, typename V>
-typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_begin() {
-
-    return kvfifo<K, V>::k_iterator(iters->begin());
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_begin() const {
+    return keys_view(*iters).begin();
 }
 
 template <typename K, typename V>
-typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_end() {
-    return kvfifo<K, V>::k_iterator(iters->end());
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_end() const {
+    return keys_view(*iters).end();
 }
 
 
