@@ -82,7 +82,7 @@ int main() {
 
     test_iterator(kvf1.k_begin());
     
-    //shouldn't compile:
+    // shouldn't compile:
     //*kvf1.k_begin() = 3;
 
     i = 0;
