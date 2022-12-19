@@ -21,7 +21,11 @@ private:
     std::shared_ptr<kv_map> iters;
     bool modifiable_from_outside;
 
+    bool is_copy_needed() const noexcept;
     void copy_if_needed();
+    kvfifo<K, V> create_copy() const;
+
+    void swap(kvfifo& other) noexcept;
 
 public:
     kvfifo();
@@ -71,7 +75,8 @@ template <typename K, typename V>
 kvfifo<K, V>::kvfifo(kvfifo<K, V> const &other)
     : queue(other.queue), iters(other.iters), modifiable_from_outside(false) {
     if (other.modifiable_from_outside) {
-        copy_if_needed();
+        auto copy = create_copy();
+        swap(copy);
     }
 }
 
@@ -83,56 +88,69 @@ kvfifo<K, V>::~kvfifo() noexcept = default;
 
 template <typename K, typename V>
 kvfifo<K, V>& kvfifo<K, V>::operator=(kvfifo<K, V> other) {
-    if (other.modifiable_from_outside) {
-        other.copy_if_needed();
-    }
-    other.queue.swap(queue);
-    other.iters.swap(iters);
-    modifiable_from_outside = false;
+    swap(other);
     return *this;
 }
 
 template <typename K, typename V>
-void kvfifo<K, V>::copy_if_needed() {
-    if (queue.use_count() <= 1) {
-        return;
-    }
+bool kvfifo<K, V>::is_copy_needed() const noexcept {
+    return queue.use_count() > 1;
+}
 
-    auto queue_copy = std::make_shared<kv_queue>(*queue);
-    auto iters_copy = std::make_shared<kv_map>(*iters);
-    for (auto it = queue_copy->begin(); it != queue_copy->end(); ++it) {
-        auto pair_it = iters_copy->find(it->first);
+template <typename K, typename V>
+void kvfifo<K, V>::copy_if_needed() {
+    if (is_copy_needed()) {
+        auto copy = create_copy();
+        swap(copy);
+    }
+}
+
+template <typename K, typename V>
+kvfifo<K, V> kvfifo<K, V>::create_copy() const {
+    kvfifo<K, V> copy;
+    copy.queue = std::make_shared<kv_queue>(*queue);
+    copy.iters = std::make_shared<kv_map>(*iters);
+    for (auto it = copy.queue->begin(); it != copy.queue->end(); ++it) {
+        auto pair_it = copy.iters->find(it->first);
         pair_it->second.pop_front();
         pair_it->second.push_back(it);
     }
+    return copy;
+}
 
-    queue_copy.swap(queue);
-    iters_copy.swap(iters);
-    modifiable_from_outside = false;
+template <typename K, typename V>
+void kvfifo<K, V>::swap(kvfifo<K, V>& other) noexcept {
+    other.queue.swap(queue);
+    other.iters.swap(iters);
+    std::swap(other.modifiable_from_outside, modifiable_from_outside);
 }
 
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
-    std::shared_ptr<kv_map> iters_copy = iters;
-    std::shared_ptr<kv_queue> queue_copy = queue;
-    if (queue.use_count() > 2) {
-        this->copy_if_needed();
-    }
-
-    queue->emplace_back(k, v);
-    auto it = iters->end();
-    bool key_created = false;
+    auto copy = is_copy_needed() ? create_copy() : *this;
+    copy.modifiable_from_outside = modifiable_from_outside;
+    swap(copy);
     try {
-        std::tie(it, key_created) =
-            iters->emplace(k, std::list<typename kv_queue::iterator>());
-        it->second.push_back(--queue->end());
-    } catch (...) {
-        if (key_created) {
-            iters->erase(it);
+        queue->emplace_back(k, v);
+        try {
+            auto it = iters->end();
+            bool key_created = false;
+            try {
+                std::tie(it, key_created) = iters->try_emplace(
+                    k, std::list<typename kv_queue::iterator>());
+                it->second.push_back(--queue->end());
+            } catch (...) {
+                if (key_created) {
+                    iters->erase(it);
+                }
+                throw;
+            }
+        } catch (...) {
+            queue->pop_back();
+            throw;
         }
-        queue->pop_back();
-        iters_copy.swap(iters);
-        queue_copy.swap(queue);
+    } catch (...) {
+        swap(copy);
         throw;
     }
     modifiable_from_outside = false;
@@ -152,7 +170,11 @@ void kvfifo<K, V>::pop(K const &k) {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    this->copy_if_needed();
+    if (is_copy_needed()) {
+        auto copy = create_copy();
+        it = copy.iters->find(k);
+        swap(copy);
+    }
     queue->erase(it->second.front());
     it->second.pop_front();
     if (it->second.empty()) {
@@ -167,7 +189,11 @@ void kvfifo<K, V>::move_to_back(K const &k) {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    this->copy_if_needed();
+    if (is_copy_needed()) {
+        auto copy = create_copy();
+        it = copy.iters->find(k);
+        swap(copy);
+    }
     for (auto const &i : it->second) {
         queue->splice(queue->end(), *queue, i);
     }
@@ -216,7 +242,11 @@ std::pair<K const &, V &> kvfifo<K, V>::first(K const &key) {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    this->copy_if_needed();
+    if (is_copy_needed()) {
+        auto copy = create_copy();
+        it = copy.iters->find(key);
+        swap(copy);
+    }
     modifiable_from_outside = true;
     return {it->second.front()->first, it->second.front()->second};
 }
@@ -236,7 +266,11 @@ std::pair<K const &, V &> kvfifo<K, V>::last(K const &key) {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    this->copy_if_needed();
+    if (is_copy_needed()) {
+        auto copy = create_copy();
+        it = copy.iters->find(key);
+        swap(copy);
+    }
     modifiable_from_outside = true;
     return {it->second.back()->first, it->second.back()->second};
 }
