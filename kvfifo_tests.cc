@@ -94,4 +94,11 @@ int main() {
         auto it = kvf1.k_begin();
         assert(*it == 0);
     }
+
+    auto kvfclear = kvf1;
+    kvfclear.clear();
+    assert(kvfclear.size() == 0);
+    assert(kvfclear.empty());
+    assert(kvf1.size() != 0);
+    assert(!kvf1.empty());
 }

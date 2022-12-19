@@ -113,7 +113,12 @@ void kvfifo<K, V>::copy_if_needed() {
 
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
-    this->copy_if_needed();
+    std::shared_ptr<kv_map> iters_copy = iters;
+    std::shared_ptr<kv_queue> queue_copy = queue;
+    if (queue.use_count() > 2) {
+        this->copy_if_needed();
+    }
+
     queue->emplace_back(k, v);
     auto it = iters->end();
     bool key_created = false;
@@ -126,6 +131,8 @@ void kvfifo<K, V>::push(K const &k, V const &v) {
             iters->erase(it);
         }
         queue->pop_back();
+        iters_copy.swap(iters);
+        queue_copy.swap(queue);
         throw;
     }
     modifiable_from_outside = false;
