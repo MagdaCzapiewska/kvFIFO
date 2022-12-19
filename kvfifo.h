@@ -49,9 +49,9 @@ public:
     std::pair<K const &, V &> last(K const &key);
     std::pair<K const &, V const &> last(K const &key) const;
 
-    size_t size() const;
+    size_t size() const noexcept;
     size_t count(K const &) const;
-    bool empty() const;
+    bool empty() const noexcept;
 
     void clear();
 
@@ -244,7 +244,7 @@ std::pair<K const &, V const &> kvfifo<K, V>::last(K const &key) const {
 }
 
 template <typename K, typename V>
-size_t kvfifo<K, V>::size() const {
+size_t kvfifo<K, V>::size() const noexcept {
     return queue->size();
 }
 
@@ -255,7 +255,7 @@ size_t kvfifo<K, V>::count(K const &k) const {
 }
 
 template <typename K, typename V>
-bool kvfifo<K, V>::empty() const {
+bool kvfifo<K, V>::empty() const noexcept {
     return queue->empty();
 }
 
