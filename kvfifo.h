@@ -23,7 +23,7 @@ private:
 
     bool is_copy_needed() const noexcept;
     void copy_if_needed();
-    kvfifo<K, V> create_copy() const;
+    kvfifo create_copy() const;
 
     void swap(kvfifo& other) noexcept;
 
@@ -128,7 +128,6 @@ void kvfifo<K, V>::swap(kvfifo<K, V>& other) noexcept {
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
     auto copy = is_copy_needed() ? create_copy() : *this;
-    copy.modifiable_from_outside = modifiable_from_outside;
     swap(copy);
     try {
         queue->emplace_back(k, v);
