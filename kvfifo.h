@@ -25,7 +25,7 @@ private:
     void copy_if_needed();
     kvfifo create_copy() const;
 
-    void swap(kvfifo& other) noexcept;
+    void swap(kvfifo &other) noexcept;
 
 public:
     kvfifo();
@@ -38,7 +38,6 @@ public:
     void push(K const &k, V const &v);
 
     void pop();
-
     void pop(K const &);
 
     void move_to_back(K const &k);
@@ -75,8 +74,7 @@ template <typename K, typename V>
 kvfifo<K, V>::kvfifo(kvfifo<K, V> const &other)
     : queue(other.queue), iters(other.iters), modifiable_from_outside(false) {
     if (other.modifiable_from_outside) {
-        auto copy = create_copy();
-        swap(copy);
+        create_copy().swap(*this);
     }
 }
 
@@ -100,8 +98,7 @@ bool kvfifo<K, V>::is_copy_needed() const noexcept {
 template <typename K, typename V>
 void kvfifo<K, V>::copy_if_needed() {
     if (is_copy_needed()) {
-        auto copy = create_copy();
-        swap(copy);
+        create_copy().swap(*this);
     }
 }
 
@@ -119,7 +116,7 @@ kvfifo<K, V> kvfifo<K, V>::create_copy() const {
 }
 
 template <typename K, typename V>
-void kvfifo<K, V>::swap(kvfifo<K, V>& other) noexcept {
+void kvfifo<K, V>::swap(kvfifo<K, V> &other) noexcept {
     other.queue.swap(queue);
     other.iters.swap(iters);
     std::swap(other.modifiable_from_outside, modifiable_from_outside);
@@ -132,11 +129,9 @@ void kvfifo<K, V>::push(K const &k, V const &v) {
     try {
         queue->emplace_back(k, v);
         try {
-            auto it = iters->end();
-            bool key_created = false;
+            auto [it, key_created] =
+                iters->try_emplace(k, std::list<typename kv_queue::iterator>());
             try {
-                std::tie(it, key_created) = iters->try_emplace(
-                    k, std::list<typename kv_queue::iterator>());
                 it->second.push_back(--queue->end());
             } catch (...) {
                 if (key_created) {
@@ -204,7 +199,7 @@ std::pair<K const &, V &> kvfifo<K, V>::front() {
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
-    this->copy_if_needed();
+    copy_if_needed();
     modifiable_from_outside = true;
     return {queue->front().first, queue->front().second};
 }
@@ -222,7 +217,7 @@ std::pair<K const &, V &> kvfifo<K, V>::back() {
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
-    this->copy_if_needed();
+    copy_if_needed();
     modifiable_from_outside = true;
     return {queue->back().first, queue->back().second};
 }
@@ -301,7 +296,7 @@ bool kvfifo<K, V>::empty() const noexcept {
 
 template <typename K, typename V>
 void kvfifo<K, V>::clear() {
-    *this = kvfifo<K, V>();
+    kvfifo<K, V>().swap(*this);
 }
 
 template <typename K, typename V>
