@@ -130,6 +130,7 @@ void kvfifo<K, V>::swap(kvfifo<K, V> &other) noexcept {
     std::swap(other.modifiable_from_outside, modifiable_from_outside);
 }
 
+#include <iostream>
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
     auto copy = is_copy_needed() ? create_copy() : *this;
@@ -139,13 +140,13 @@ void kvfifo<K, V>::push(K const &k, V const &v) {
         try {
             queue->emplace_back(key_it, v);
             try {
-                auto [map_it, key_created] = iters->try_emplace(
+                auto [it, key_created] = iters->try_emplace(
                         k, std::list<typename kv_queue::iterator>());
                 try {
-                    map_it->second.push_back(--queue->end());
+                    it->second.push_back(--queue->end());
                 } catch (...) {
                     if (key_created) {
-                        iters->erase(map_it);
+                        iters->erase(it);
                     }
                     throw;
                 }
