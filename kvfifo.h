@@ -5,7 +5,7 @@
 #include <list>
 #include <map>
 #include <memory>
-#include <ranges>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -13,10 +13,11 @@
 template <typename K, typename V>
 class kvfifo {
 private:
-    using kv_queue = std::list<std::pair<K, V>>;
+    using k_set = std::set<K>;
+    using kv_queue = std::list<std::pair<typename k_set::iterator, V>>;
     using kv_map = std::map<K, std::list<typename kv_queue::iterator>>;
-    using keys_view = std::ranges::keys_view<std::ranges::ref_view<kv_map>>;
 
+    std::shared_ptr<k_set> keys;
     std::shared_ptr<kv_queue> queue;
     std::shared_ptr<kv_map> iters;
     bool modifiable_from_outside;
@@ -58,21 +59,25 @@ public:
 
     void clear();
 
-    using k_iterator = std::ranges::iterator_t<keys_view>;
+    using k_iterator = k_set::const_iterator;
 
-    k_iterator k_begin() const;
-    k_iterator k_end() const;
+    k_iterator k_begin() const noexcept;
+    k_iterator k_end() const noexcept;
 };
 
 template <typename K, typename V>
 kvfifo<K, V>::kvfifo()
-    : queue(std::make_shared<kv_queue>()),
+    : keys(std::make_shared<k_set>()),
+      queue(std::make_shared<kv_queue>()),
       iters(std::make_shared<kv_map>()),
       modifiable_from_outside(false) {}
 
 template <typename K, typename V>
 kvfifo<K, V>::kvfifo(kvfifo<K, V> const &other)
-    : queue(other.queue), iters(other.iters), modifiable_from_outside(false) {
+    : keys(other.keys), 
+      queue(other.queue), 
+      iters(other.iters), 
+      modifiable_from_outside(false) {
     if (other.modifiable_from_outside) {
         create_copy().swap(*this);
     }
@@ -105,18 +110,21 @@ void kvfifo<K, V>::copy_if_needed() {
 template <typename K, typename V>
 kvfifo<K, V> kvfifo<K, V>::create_copy() const {
     kvfifo<K, V> copy;
+    copy.keys = std::make_shared<k_set>(*keys);
     copy.queue = std::make_shared<kv_queue>(*queue);
     copy.iters = std::make_shared<kv_map>(*iters);
     for (auto it = copy.queue->begin(); it != copy.queue->end(); ++it) {
-        auto pair_it = copy.iters->find(it->first);
-        pair_it->second.pop_front();
-        pair_it->second.push_back(it);
+        it->first = copy.keys->find(*it->first);
+        auto map_it = copy.iters->find(*it->first);
+        map_it->second.pop_front();
+        map_it->second.push_back(it);
     }
     return copy;
 }
 
 template <typename K, typename V>
 void kvfifo<K, V>::swap(kvfifo<K, V> &other) noexcept {
+    other.keys.swap(keys);
     other.queue.swap(queue);
     other.iters.swap(iters);
     std::swap(other.modifiable_from_outside, modifiable_from_outside);
@@ -127,20 +135,28 @@ void kvfifo<K, V>::push(K const &k, V const &v) {
     auto copy = is_copy_needed() ? create_copy() : *this;
     swap(copy);
     try {
-        queue->emplace_back(k, v);
+        auto [key_it, key_inserted] = keys->insert(k);
         try {
-            auto [it, key_created] =
-                iters->try_emplace(k, std::list<typename kv_queue::iterator>());
+            queue->emplace_back(key_it, v);
             try {
-                it->second.push_back(--queue->end());
-            } catch (...) {
-                if (key_created) {
-                    iters->erase(it);
+                auto [map_it, key_created] = iters->try_emplace(
+                        k, std::list<typename kv_queue::iterator>());
+                try {
+                    map_it->second.push_back(--queue->end());
+                } catch (...) {
+                    if (key_created) {
+                        iters->erase(map_it);
+                    }
+                    throw;
                 }
+            } catch (...) {
+                queue->pop_back();
                 throw;
             }
         } catch (...) {
-            queue->pop_back();
+            if (key_inserted) {
+                keys->erase(key_it);
+            }
             throw;
         }
     } catch (...) {
@@ -155,7 +171,7 @@ void kvfifo<K, V>::pop() {
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
-    pop(queue->front().first);
+    pop(*queue->front().first);
 }
 
 template <typename K, typename V>
@@ -169,10 +185,12 @@ void kvfifo<K, V>::pop(K const &k) {
         it = copy.iters->find(k);
         swap(copy);
     }
+    auto key_it = it->second.front()->first;
     queue->erase(it->second.front());
     it->second.pop_front();
     if (it->second.empty()) {
         iters->erase(it);
+        keys->erase(key_it);
     }
     modifiable_from_outside = false;
 }
@@ -201,7 +219,7 @@ std::pair<K const &, V &> kvfifo<K, V>::front() {
     }
     copy_if_needed();
     modifiable_from_outside = true;
-    return {queue->front().first, queue->front().second};
+    return {*queue->front().first, queue->front().second};
 }
 
 template <typename K, typename V>
@@ -209,7 +227,7 @@ std::pair<K const &, V const &> kvfifo<K, V>::front() const {
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
-    return {queue->front().first, queue->front().second};
+    return {*queue->front().first, queue->front().second};
 }
 
 template <typename K, typename V>
@@ -219,7 +237,7 @@ std::pair<K const &, V &> kvfifo<K, V>::back() {
     }
     copy_if_needed();
     modifiable_from_outside = true;
-    return {queue->back().first, queue->back().second};
+    return {*queue->back().first, queue->back().second};
 }
 
 template <typename K, typename V>
@@ -227,7 +245,7 @@ std::pair<K const &, V const &> kvfifo<K, V>::back() const {
     if (queue->empty()) {
         throw std::invalid_argument("Queue is empty!");
     }
-    return {queue->back().first, queue->back().second};
+    return {*queue->back().first, queue->back().second};
 }
 
 template <typename K, typename V>
@@ -242,7 +260,7 @@ std::pair<K const &, V &> kvfifo<K, V>::first(K const &key) {
         swap(copy);
     }
     modifiable_from_outside = true;
-    return {it->second.front()->first, it->second.front()->second};
+    return {*it->second.front()->first, it->second.front()->second};
 }
 
 template <typename K, typename V>
@@ -251,7 +269,7 @@ std::pair<K const &, V const &> kvfifo<K, V>::first(K const &key) const {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    return {it->second.front()->first, it->second.front()->second};
+    return {*it->second.front()->first, it->second.front()->second};
 }
 
 template <typename K, typename V>
@@ -266,7 +284,7 @@ std::pair<K const &, V &> kvfifo<K, V>::last(K const &key) {
         swap(copy);
     }
     modifiable_from_outside = true;
-    return {it->second.back()->first, it->second.back()->second};
+    return {*it->second.back()->first, it->second.back()->second};
 }
 
 template <typename K, typename V>
@@ -275,7 +293,7 @@ std::pair<K const &, V const &> kvfifo<K, V>::last(K const &key) const {
     if (it == iters->end()) {
         throw std::invalid_argument("No such key in the queue!");
     }
-    return {it->second.back()->first, it->second.back()->second};
+    return {*it->second.back()->first, it->second.back()->second};
 }
 
 template <typename K, typename V>
@@ -300,13 +318,13 @@ void kvfifo<K, V>::clear() {
 }
 
 template <typename K, typename V>
-typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_begin() const {
-    return keys_view(*iters).begin();
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_begin() const noexcept {
+    return keys->cbegin();
 }
 
 template <typename K, typename V>
-typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_end() const {
-    return keys_view(*iters).end();
+typename kvfifo<K, V>::k_iterator kvfifo<K, V>::k_end() const noexcept {
+    return keys->cend();
 }
 
 #endif  // __KVFIFO_H__
