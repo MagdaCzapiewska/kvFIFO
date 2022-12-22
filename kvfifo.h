@@ -130,7 +130,6 @@ void kvfifo<K, V>::swap(kvfifo<K, V> &other) noexcept {
     std::swap(other.modifiable_from_outside, modifiable_from_outside);
 }
 
-#include <iostream>
 template <typename K, typename V>
 void kvfifo<K, V>::push(K const &k, V const &v) {
     auto copy = is_copy_needed() ? create_copy() : *this;
