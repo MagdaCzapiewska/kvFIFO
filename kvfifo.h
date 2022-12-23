@@ -74,9 +74,9 @@ kvfifo<K, V>::kvfifo()
 
 template <typename K, typename V>
 kvfifo<K, V>::kvfifo(kvfifo<K, V> const &other)
-    : keys(other.keys), 
-      queue(other.queue), 
-      iters(other.iters), 
+    : keys(other.keys),
+      queue(other.queue),
+      iters(other.iters),
       modifiable_from_outside(false) {
     if (other.modifiable_from_outside) {
         create_copy().swap(*this);
